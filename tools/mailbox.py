@@ -10,6 +10,33 @@
 import json
 from utils.pipedrive import pipedrive_get, pipedrive_put, pipedrive_delete
 
+def _strip_html(html: str) -> str:
+    """
+    Supprime les balises HTML pour retourner du texte brut.
+    Utilisé pour nettoyer le body des emails avant de le retourner.
+    """
+    if not html:
+        return ""
+    # Supprime les balises <style> et <script> avec leur contenu
+    text = re.sub(r"<(style|script)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # Remplace <br>, <p>, <div> par des sauts de ligne
+    text = re.sub(r"<(br|p|div|tr)[^>]*>", "\n", text, flags=re.IGNORECASE)
+    # Supprime toutes les autres balises HTML
+    text = re.sub(r"<[^>]+>", "", text)
+    # Décode les entités HTML courantes
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+    # Nettoie les espaces et lignes vides multiples
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
+
+def _extract_emails(parties: list) -> list:
+    """
+    Extrait uniquement les adresses email depuis une liste de parties
+    (from/to/cc Pipedrive).
+    """
+    return [p.get("email_address", "") for p in (parties or []) if p.get("email_address")]
 
 def register(mcp):
 
@@ -37,30 +64,112 @@ def register(mcp):
         except Exception as e:
             return json.dumps({"error": str(e), "deal_id": deal_id}, ensure_ascii=False)
 
+@mcp.tool()
+def get_deal_mail_messages(deal_id: str, limit: int = 50) -> str:
+    """
+    Liste les emails d'un deal avec uniquement les métadonnées essentielles.
+    N'inclut PAS le body — utilisez get_mail_message_body(message_id)
+    pour récupérer le contenu complet d'un message spécifique.
 
-    @mcp.tool()
-    def get_mail_message(message_id: str, include_body: str = "true") -> str:
-        """
-        Retourne le contenu complet d'un message email.
+    Args:
+        deal_id : identifiant du deal
+        limit   : nombre max de messages (défaut: 50)
 
-        Args:
-            message_id   : identifiant du message
-            include_body : "true" pour inclure le corps du message (défaut: true)
+    Returns:
+        JSON avec la liste résumée des messages :
+        id, subject, from, to, date, has_attachments.
+    """
+    try:
+        params = {"start": 0, "limit": min(limit, 100)}
+        data = pipedrive_get(
+            f"/deals/{deal_id}/mailMessages",
+            params=params, version=1
+        )
 
-        Returns:
-            JSON avec le message complet (sujet, corps, expéditeur, destinataires,
-            pièces jointes...).
-        """
-        try:
-            params = {"include_body": 1 if include_body.lower() == "true" else 0}
-            data = pipedrive_get(
-                f"/mailbox/mailMessages/{message_id}",
-                params=params, version=1
-            )
-            return json.dumps(data, ensure_ascii=False, indent=2)
-        except Exception as e:
-            return json.dumps({"error": str(e), "message_id": message_id}, ensure_ascii=False)
+        raw_messages = data.get("data") or []
 
+        # ── Extraction des champs utiles uniquement ────────────
+        # On élimine les dizaines de champs techniques inutiles
+        # (s3_bucket, nylas_id, flags internes, etc.)
+        clean_messages = []
+        for msg in raw_messages:
+            d = msg.get("data") or {}
+            clean_messages.append({
+                "id":              d.get("id"),
+                "subject":         d.get("subject", ""),
+                "date":            d.get("message_time") or d.get("timestamp"),
+                "from":            _extract_emails(d.get("from", [])),
+                "to":              _extract_emails(d.get("to", [])),
+                "cc":              _extract_emails(d.get("cc", [])),
+                "snippet":         d.get("snippet", ""),   # Aperçu du contenu
+                "has_attachments": bool(d.get("has_real_attachments_flag")),
+                "read":            bool(d.get("read_flag")),
+                "thread_id":       d.get("mail_thread_id"),
+            })
+
+        output = {
+            "deal_id":       deal_id,
+            "message_count": len(clean_messages),
+            "messages":      clean_messages,
+        }
+
+        return json.dumps(output, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        return json.dumps({"error": str(e), "deal_id": deal_id}, ensure_ascii=False)
+        
+@mcp.tool()
+def get_mail_message_body(message_id: str) -> str:
+    """
+    Récupère le contenu complet d'un email avec uniquement
+    les métadonnées pertinentes : expéditeur, destinataires, date et body.
+
+    Utilisez cet outil après get_deal_mail_messages pour lire
+    le contenu d'un message spécifique.
+
+    Args:
+        message_id : identifiant du message (champ "id" dans get_deal_mail_messages)
+
+    Returns:
+        JSON avec :
+        - id      : identifiant du message
+        - subject : sujet de l'email
+        - date    : date d'envoi (ISO 8601)
+        - from    : adresse email de l'expéditeur
+        - to      : liste des adresses email des destinataires
+        - cc      : liste des adresses email en copie
+        - body    : contenu texte brut de l'email (HTML strippé)
+    """
+    try:
+        # include_body=1 demande à Pipedrive d'inclure le corps du message
+        # Sans ce paramètre, le body est absent de la réponse
+        data = pipedrive_get(
+            f"/mailbox/mailMessages/{message_id}",
+            params={"include_body": 1},
+            version=1
+        )
+
+        d = (data.get("data") or {})
+
+        # ── Extraction et nettoyage du body ────────────────────
+        # Pipedrive retourne le body en HTML → on le convertit en texte brut
+        body_html = d.get("body") or ""
+        body_text = _strip_html(body_html)
+
+        output = {
+            "id":      d.get("id"),
+            "subject": d.get("subject", ""),
+            "date":    d.get("message_time") or d.get("add_time"),
+            "from":    _extract_emails(d.get("from", [])),
+            "to":      _extract_emails(d.get("to", [])),
+            "cc":      _extract_emails(d.get("cc", [])),
+            "body":    body_text,
+        }
+
+        return json.dumps(output, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        return json.dumps({"error": str(e), "message_id": message_id}, ensure_ascii=False)
 
     @mcp.tool()
     def get_mail_threads(folder: str = "inbox", limit: int = 30) -> str:
