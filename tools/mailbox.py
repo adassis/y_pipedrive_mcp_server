@@ -141,70 +141,70 @@ def register(mcp):
         JSON avec : message_count, messages (id, subject, from, to, cc,
                     date, snippet, has_attachments, read, thread_id).
     """
-    try:
-        max_items = min(max_items, 500)  # Plafond de sécurité
-        all_messages = []
-        start = 0
-        limit = 100  # Maximum autorisé par Pipedrive v1
+        try:
+            max_items = min(max_items, 500)  # Plafond de sécurité
+            all_messages = []
+            start = 0
+            limit = 100  # Maximum autorisé par Pipedrive v1
 
-        # ── Pagination automatique ─────────────────────────────
-        # Pipedrive v1 retourne jusqu'à 100 messages par page.
-        # On itère jusqu'à ce que more_items_in_collection = false
-        # ou qu'on atteigne max_items.
-        while True:
-            data = pipedrive_get(
-                f"/deals/{deal_id}/mailMessages",
-                params={"start": start, "limit": limit},
-                version=1
-            )
+            # ── Pagination automatique ─────────────────────────────
+            # Pipedrive v1 retourne jusqu'à 100 messages par page.
+            # On itère jusqu'à ce que more_items_in_collection = false
+            # ou qu'on atteigne max_items.
+            while True:
+                data = pipedrive_get(
+                    f"/deals/{deal_id}/mailMessages",
+                    params={"start": start, "limit": limit},
+                    version=1
+                )
 
-            items = data.get("data") or []
-            all_messages.extend(items)
+                items = data.get("data") or []
+                all_messages.extend(items)
 
-            # Vérification s'il reste des pages
-            pagination = (
-                (data.get("additional_data") or {})
-                .get("pagination") or {}
-            )
-            has_more = pagination.get("more_items_in_collection", False)
+                # Vérification s'il reste des pages
+                pagination = (
+                    (data.get("additional_data") or {})
+                    .get("pagination") or {}
+                )
+                has_more = pagination.get("more_items_in_collection", False)
 
-            if not has_more or len(all_messages) >= max_items:
-                break  # Plus de pages ou limite atteinte
+                if not has_more or len(all_messages) >= max_items:
+                    break  # Plus de pages ou limite atteinte
 
-            start += limit  # Page suivante
+                start += limit  # Page suivante
 
-        # Tronque si on a dépassé max_items
-        all_messages = all_messages[:max_items]
+            # Tronque si on a dépassé max_items
+            all_messages = all_messages[:max_items]
 
-        # ── Nettoyage : on garde uniquement les champs utiles ──
-        clean_messages = []
-        for msg in all_messages:
-            d = msg.get("data") or {}
-            clean_messages.append({
-                "id":              d.get("id"),
-                "subject":         d.get("subject", ""),
-                "date":            d.get("message_time") or d.get("timestamp"),
-                "from":            _extract_emails(d.get("from", [])),
-                "to":              _extract_emails(d.get("to", [])),
-                "cc":              _extract_emails(d.get("cc", [])),
-                "snippet":         d.get("snippet", ""),
-                "has_attachments": bool(d.get("has_real_attachments_flag")),
-                "read":            bool(d.get("read_flag")),
-                "thread_id":       d.get("mail_thread_id"),
-            })
+            # ── Nettoyage : on garde uniquement les champs utiles ──
+            clean_messages = []
+            for msg in all_messages:
+                d = msg.get("data") or {}
+                clean_messages.append({
+                    "id":              d.get("id"),
+                    "subject":         d.get("subject", ""),
+                    "date":            d.get("message_time") or d.get("timestamp"),
+                    "from":            _extract_emails(d.get("from", [])),
+                    "to":              _extract_emails(d.get("to", [])),
+                    "cc":              _extract_emails(d.get("cc", [])),
+                    "snippet":         d.get("snippet", ""),
+                    "has_attachments": bool(d.get("has_real_attachments_flag")),
+                    "read":            bool(d.get("read_flag")),
+                    "thread_id":       d.get("mail_thread_id"),
+                })
 
-        output = {
-            "deal_id":       deal_id,
-            "message_count": len(clean_messages),
-            "truncated":     len(all_messages) >= max_items and has_more,
-            # truncated = True signifie qu'il existe encore des emails
-            # au-delà de max_items — augmentez max_items si nécessaire
-            "messages":      clean_messages,
-        }
-        return json.dumps(output, ensure_ascii=False, indent=2)
+            output = {
+                "deal_id":       deal_id,
+                "message_count": len(clean_messages),
+                "truncated":     len(all_messages) >= max_items and has_more,
+                # truncated = True signifie qu'il existe encore des emails
+                # au-delà de max_items — augmentez max_items si nécessaire
+                "messages":      clean_messages,
+            }
+            return json.dumps(output, ensure_ascii=False, indent=2)
 
-    except Exception as e:
-        return json.dumps({"error": str(e), "deal_id": deal_id}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e), "deal_id": deal_id}, ensure_ascii=False)
 
 
     @mcp.tool()
