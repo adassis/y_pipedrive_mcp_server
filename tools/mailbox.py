@@ -105,7 +105,117 @@ def register(mcp):
         except Exception as e:
             return json.dumps({"error": str(e), "deal_id": deal_id}, ensure_ascii=False)
 
+    @mcp.tool()
+    def get_deal_mail_bodies_bulk(
+        deal_id: str,
+        limit: int = 20,
+        start: int = 0,
+        date_from: str = "",
+        date_to: str = ""
+    ) -> str:
+        """
+        Récupère les emails d'un deal AVEC leur contenu complet (body),
+        en un seul appel. Conçu pour éviter les appels individuels répétés.
 
+        Workflow recommandé pour un deal avec beaucoup d'emails :
+        1. Appelez get_deal_mail_messages pour voir la liste complète
+        2. Appelez get_deal_mail_bodies_bulk avec des filtres pour cibler
+        les emails pertinents (date_from/date_to)
+        3. Augmentez 'start' pour paginer si nécessaire
+
+        Args:
+            deal_id   : identifiant du deal
+            limit     : nombre d'emails à récupérer avec body (défaut: 20, max: 30)
+                        Limité pour éviter les timeouts — utilisez start pour paginer.
+            start     : offset de pagination (défaut: 0)
+                        Exemple : start=20 pour récupérer les emails 21 à 40.
+            date_from : filtrer les emails après cette date (format: YYYY-MM-DD)
+            date_to   : filtrer les emails avant cette date (format: YYYY-MM-DD)
+
+        Returns:
+            JSON avec :
+            - deal_id        : identifiant du deal
+            - total_fetched  : nombre d'emails retournés dans cette page
+            - has_more       : True s'il reste des emails après cette page
+            - next_start     : valeur de start pour la page suivante
+            - emails         : liste avec {id, subject, date, from, to, cc, body}
+        """
+        try:
+            limit = min(limit, 30)  # Plafond à 30 pour éviter les timeouts
+
+            # ── 1. Récupère la liste des messages (sans body) ──────
+            # On prend une fenêtre plus large pour pouvoir filtrer par date
+            fetch_limit = limit * 3 if (date_from or date_to) else limit
+            data = pipedrive_get(
+                f"/deals/{deal_id}/mailMessages",
+                params={"start": start, "limit": min(fetch_limit, 100)},
+                version=1
+            )
+
+            raw_messages = data.get("data") or []
+            pagination   = ((data.get("additional_data") or {}).get("pagination") or {})
+
+            # ── 2. Filtre par date si demandé ──────────────────────
+            if date_from or date_to:
+                filtered = []
+                for msg in raw_messages:
+                    d    = msg.get("data") or {}
+                    date = (d.get("message_time") or d.get("timestamp") or "")[:10]
+                    if date_from and date < date_from:
+                        continue
+                    if date_to and date > date_to:
+                        continue
+                    filtered.append(msg)
+                raw_messages = filtered[:limit]
+            else:
+                raw_messages = raw_messages[:limit]
+
+            # ── 3. Récupère le body pour chaque message ────────────
+            emails = []
+            for msg in raw_messages:
+                d          = msg.get("data") or {}
+                message_id = d.get("id")
+
+                if not message_id:
+                    continue
+
+                try:
+                    # Appel individuel avec include_body=1
+                    body_data = pipedrive_get(
+                        f"/mailbox/mailMessages/{message_id}",
+                        params={"include_body": 1},
+                        version=1
+                    )
+                    bd        = body_data.get("data") or {}
+                    body_text = _strip_html(bd.get("body") or "")
+                except Exception:
+                    body_text = ""  # En cas d'erreur sur un message, on continue
+
+                emails.append({
+                    "id":      message_id,
+                    "subject": d.get("subject", ""),
+                    "date":    d.get("message_time") or d.get("timestamp"),
+                    "from":    _extract_emails(d.get("from", [])),
+                    "to":      _extract_emails(d.get("to", [])),
+                    "cc":      _extract_emails(d.get("cc", [])),
+                    "body":    body_text,
+                })
+
+            # ── 4. Construction de la réponse ──────────────────────
+            has_more   = pagination.get("more_items_in_collection", False)
+            next_start = start + limit
+
+            output = {
+                "deal_id":       deal_id,
+                "total_fetched": len(emails),
+                "has_more":      has_more,
+                "next_start":    next_start if has_more else None,
+                "emails":        emails,
+            }
+            return json.dumps(output, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            return json.dumps({"error": str(e), "deal_id": deal_id}, ensure_ascii=False)
     @mcp.tool()
     def get_mail_message_body(message_id: str) -> str:
         """
