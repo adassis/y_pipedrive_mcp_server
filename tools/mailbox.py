@@ -124,26 +124,87 @@ def register(mcp):
 
 
     @mcp.tool()
-    def get_mail_message(message_id: str, include_body: str = "true") -> str:
-        """
-        Retourne le contenu complet et brut d'un message email (réponse Pipedrive complète).
+    def get_deal_mail_messages(deal_id: str, max_items: int = 200) -> str:
+    """
+    Liste les emails d'un deal avec uniquement les métadonnées essentielles.
+    Gère automatiquement la pagination pour récupérer TOUS les emails.
+    N'inclut PAS le body — utilisez get_mail_message_body(message_id)
+    pour lire le contenu complet d'un message spécifique.
 
-        Args:
-            message_id   : identifiant du message
-            include_body : "true" pour inclure le body HTML (défaut: true)
+    Args:
+        deal_id   : identifiant du deal
+        max_items : nombre maximum total d'emails à récupérer (défaut: 200, max: 500)
+                    Pipedrive limite à 100 par requête — la pagination est gérée
+                    automatiquement en interne.
 
-        Returns:
-            JSON complet Pipedrive du message.
-        """
-        try:
-            params = {"include_body": 1 if include_body.lower() == "true" else 0}
+    Returns:
+        JSON avec : message_count, messages (id, subject, from, to, cc,
+                    date, snippet, has_attachments, read, thread_id).
+    """
+    try:
+        max_items = min(max_items, 500)  # Plafond de sécurité
+        all_messages = []
+        start = 0
+        limit = 100  # Maximum autorisé par Pipedrive v1
+
+        # ── Pagination automatique ─────────────────────────────
+        # Pipedrive v1 retourne jusqu'à 100 messages par page.
+        # On itère jusqu'à ce que more_items_in_collection = false
+        # ou qu'on atteigne max_items.
+        while True:
             data = pipedrive_get(
-                f"/mailbox/mailMessages/{message_id}",
-                params=params, version=1
+                f"/deals/{deal_id}/mailMessages",
+                params={"start": start, "limit": limit},
+                version=1
             )
-            return json.dumps(data, ensure_ascii=False, indent=2)
-        except Exception as e:
-            return json.dumps({"error": str(e), "message_id": message_id}, ensure_ascii=False)
+
+            items = data.get("data") or []
+            all_messages.extend(items)
+
+            # Vérification s'il reste des pages
+            pagination = (
+                (data.get("additional_data") or {})
+                .get("pagination") or {}
+            )
+            has_more = pagination.get("more_items_in_collection", False)
+
+            if not has_more or len(all_messages) >= max_items:
+                break  # Plus de pages ou limite atteinte
+
+            start += limit  # Page suivante
+
+        # Tronque si on a dépassé max_items
+        all_messages = all_messages[:max_items]
+
+        # ── Nettoyage : on garde uniquement les champs utiles ──
+        clean_messages = []
+        for msg in all_messages:
+            d = msg.get("data") or {}
+            clean_messages.append({
+                "id":              d.get("id"),
+                "subject":         d.get("subject", ""),
+                "date":            d.get("message_time") or d.get("timestamp"),
+                "from":            _extract_emails(d.get("from", [])),
+                "to":              _extract_emails(d.get("to", [])),
+                "cc":              _extract_emails(d.get("cc", [])),
+                "snippet":         d.get("snippet", ""),
+                "has_attachments": bool(d.get("has_real_attachments_flag")),
+                "read":            bool(d.get("read_flag")),
+                "thread_id":       d.get("mail_thread_id"),
+            })
+
+        output = {
+            "deal_id":       deal_id,
+            "message_count": len(clean_messages),
+            "truncated":     len(all_messages) >= max_items and has_more,
+            # truncated = True signifie qu'il existe encore des emails
+            # au-delà de max_items — augmentez max_items si nécessaire
+            "messages":      clean_messages,
+        }
+        return json.dumps(output, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        return json.dumps({"error": str(e), "deal_id": deal_id}, ensure_ascii=False)
 
 
     @mcp.tool()
