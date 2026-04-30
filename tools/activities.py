@@ -70,6 +70,7 @@ def register(mcp):
         activity_type: str = "task",
         deal_id: str = "",
         person_id: str = "",
+        user_id: str = "",
         org_id: str = "",
         due_date: str = "",
         due_time: str = "",
@@ -85,6 +86,7 @@ def register(mcp):
             activity_type : type — "call", "meeting", "task", "email", "deadline", etc.
             deal_id       : ID du deal lié
             person_id     : ID de la personne liée
+            user_id       : ID du bizdev owner de l'acti
             org_id        : ID de l'organisation liée
             due_date      : date d'échéance (YYYY-MM-DD)
             due_time      : heure d'échéance (HH:MM)
@@ -103,6 +105,7 @@ def register(mcp):
             }
             if deal_id:   body["deal_id"]   = int(deal_id)
             if person_id: body["person_id"] = int(person_id)
+            if user_id:   body["user_id"]   = int(user_id)
             if org_id:    body["org_id"]    = int(org_id)
             if due_date:  body["due_date"]  = due_date
             if due_time:  body["due_time"]  = due_time
@@ -122,6 +125,7 @@ def register(mcp):
         activity_type: str = "",
         deal_id: str = "",
         person_id: str = "",
+        user_id: str = "",
         due_date: str = "",
         due_time: str = "",
         duration: str = "",
@@ -137,6 +141,7 @@ def register(mcp):
             activity_type : nouveau type
             deal_id       : nouvel ID de deal lié
             person_id     : nouvel ID de personne liée
+            user_id       : bizdev owner de l'acti
             due_date      : nouvelle date d'échéance (YYYY-MM-DD)
             due_time      : nouvelle heure (HH:MM)
             duration      : nouvelle durée (HH:MM)
@@ -152,6 +157,7 @@ def register(mcp):
             if activity_type: body["type"]     = activity_type
             if deal_id:       body["deal_id"]  = int(deal_id)
             if person_id:     body["person_id"] = int(person_id)
+            if user_id:       body["user_id"]  = int(user_id)
             if due_date:      body["due_date"] = due_date
             if due_time:      body["due_time"] = due_time
             if duration:      body["duration"] = duration
