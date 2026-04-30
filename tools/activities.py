@@ -157,7 +157,7 @@ def register(mcp):
             if activity_type: body["type"]     = activity_type
             if deal_id:       body["deal_id"]  = int(deal_id)
             if person_id:     body["person_id"] = int(person_id)
-            if owner_id:      body["owner_id"]  = int(user_id)
+            if owner_id:      body["owner_id"]  = int(owner_id)
             if due_date:      body["due_date"] = due_date
             if due_time:      body["due_time"] = due_time
             if duration:      body["duration"] = duration

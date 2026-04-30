@@ -19,6 +19,7 @@ import tools.activities
 import tools.notes
 import tools.mailbox
 import tools.attachments
+import tools.users    
 
 # ── Initialisation ────────────────────────────────────────────
 mcp = FastMCP(
@@ -41,6 +42,7 @@ tools.activities.register(mcp)
 tools.notes.register(mcp)
 tools.mailbox.register(mcp)
 tools.attachments.register(mcp)
+tools.users.register(mcp)   
 
 # ── Middleware d'authentification ─────────────────────────────
 class BearerAuthMiddleware(BaseHTTPMiddleware):
